@@ -46,9 +46,9 @@ public class MediaUtils
                 .toString();
 
         // defaults to Public Pictures Directory
-        File path = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+        File path = reactContext.getExternalFilesDir(Environment.DIRECTORY_PICTURES);
 
-        if (ReadableMapUtils.hasAndNotNullReadableMap(options, "storageOptions")) 
+        if (ReadableMapUtils.hasAndNotNullReadableMap(options, "storageOptions"))
         {
             final ReadableMap storageOptions = options.getMap("storageOptions");
 
