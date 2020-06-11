@@ -35,6 +35,9 @@
     "image",
     "picker"
   ],
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/"
+  },
   "dependencies": {},
   "devDependencies": {
     "@babel/core": "^7.4.5",
