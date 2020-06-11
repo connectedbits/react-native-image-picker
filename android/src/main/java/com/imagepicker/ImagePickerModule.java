@@ -7,20 +7,18 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StyleRes;
 import androidx.core.app.ActivityCompat;
 import androidx.appcompat.app.AlertDialog;
-import android.text.TextUtils;
+
 import android.util.Base64;
-import android.util.Patterns;
-import android.webkit.MimeTypeMap;
 import android.content.pm.PackageManager;
 
 import com.facebook.react.ReactActivity;
@@ -39,14 +37,12 @@ import com.imagepicker.utils.ReadableMapUtils;
 import com.imagepicker.utils.RealPathUtil;
 import com.imagepicker.utils.UI;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.List;
 
@@ -83,7 +79,7 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
   private Boolean noData = false;
   private Boolean pickVideo = false;
   private Boolean pickBoth = false;
-  private ImageConfig imageConfig = new ImageConfig(null, null, 0, 0, 100, 0, false);
+  private ImageConfig imageConfig = new ImageConfig(0, 0, 100, 0, false);
 
   @Deprecated
   private int videoQuality = 1;
@@ -163,7 +159,7 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
 
     this.callback = callback;
     this.options = options;
-    imageConfig = new ImageConfig(null, null, 0, 0, 100, 0, false);
+    imageConfig = new ImageConfig(0, 0, 100, 0, false);
 
     final AlertDialog dialog = UI.chooseDialog(this, options, new UI.OnAction()
     {
@@ -272,10 +268,9 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
       cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
 
       final File original = createNewFile(reactContext, this.options, false);
-      imageConfig = imageConfig.withOriginalFile(original);
 
-      if (imageConfig.original != null) {
-        cameraCaptureURI = RealPathUtil.compatUriFromFile(reactContext, imageConfig.original);
+      if (original != null) {
+        cameraCaptureURI = RealPathUtil.compatUriFromFile(reactContext, original);
       }else {
         responseHelper.invokeError(callback, "Couldn't get file path for photo");
         return;
@@ -347,18 +342,23 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
     if (pickVideo)
     {
       requestCode = REQUEST_LAUNCH_VIDEO_LIBRARY;
-      libraryIntent = new Intent(Intent.ACTION_PICK);
+      libraryIntent = new Intent(Intent.ACTION_GET_CONTENT);
       libraryIntent.setType("video/*");
+      libraryIntent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+      libraryIntent.putExtra(Intent.CATEGORY_OPENABLE, true);
     }
     else
     {
       requestCode = REQUEST_LAUNCH_IMAGE_LIBRARY;
-      libraryIntent = new Intent(Intent.ACTION_PICK,
-      MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
+      libraryIntent = new Intent(Intent.ACTION_GET_CONTENT);
+      libraryIntent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+      libraryIntent.putExtra(Intent.CATEGORY_OPENABLE, true);
 
-      if (pickBoth) 
+      if (pickBoth)
       {
         libraryIntent.setType("image/* video/*");
+      } else {
+        libraryIntent.setType("image/*");
       }
     }
 
@@ -398,7 +398,6 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
     // user cancel
     if (resultCode != Activity.RESULT_OK)
     {
-      removeUselessFiles(requestCode, imageConfig);
       responseHelper.invokeCancel(callback);
       callback = null;
       return;
@@ -413,52 +412,45 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
 
       case REQUEST_LAUNCH_IMAGE_LIBRARY:
         uri = data.getData();
-        String realPath = getRealPathFromURI(uri);
-        final boolean isUrl = !TextUtils.isEmpty(realPath) &&
-                Patterns.WEB_URL.matcher(realPath).matches();
-        if (realPath == null || isUrl)
-        {
-          try
-          {
-            File file = createFileFromURI(uri);
-            realPath = file.getAbsolutePath();
-            uri = Uri.fromFile(file);
-          }
-          catch (Exception e)
-          {
-            // image not in cache
+          if(uri == null){
             responseHelper.putString("error", "Could not read photo");
-            responseHelper.putString("uri", uri.toString());
             responseHelper.invokeResponse(callback);
             callback = null;
             return;
           }
-        }
-        imageConfig = imageConfig.withOriginalFile(new File(realPath));
         break;
 
       case REQUEST_LAUNCH_VIDEO_LIBRARY:
         responseHelper.putString("uri", data.getData().toString());
-        responseHelper.putString("path", getRealPathFromURI(data.getData()));
         responseHelper.invokeResponse(callback);
         callback = null;
         return;
 
       case REQUEST_LAUNCH_VIDEO_CAPTURE:
-        final String path = getRealPathFromURI(data.getData());
         responseHelper.putString("uri", data.getData().toString());
-        responseHelper.putString("path", path);
-        fileScan(reactContext, path);
         responseHelper.invokeResponse(callback);
         callback = null;
         return;
     }
 
-    final ReadExifResult result = readExifInterface(responseHelper, imageConfig);
-
+    ReadExifResult result = null;
+    try {
+      InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+      if(imageInputStream != null){
+        result = readExifInterface(imageInputStream, responseHelper);
+      }
+    } catch(IOException ex){
+      responseHelper.invokeError(callback, ex.getMessage());
+      callback = null;
+      return;
+    }
+    if (result == null) {
+      responseHelper.invokeError(callback, "Image could not be read");
+      callback = null;
+      return;
+    }
     if (result.error != null)
     {
-      removeUselessFiles(requestCode, imageConfig);
       responseHelper.invokeError(callback, result.error.getMessage());
       callback = null;
       return;
@@ -466,57 +458,68 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
 
     BitmapFactory.Options options = new BitmapFactory.Options();
     options.inJustDecodeBounds = true;
-    BitmapFactory.decodeFile(imageConfig.original.getAbsolutePath(), options);
+    Bitmap imageBitmap = null;
+    try {
+      InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+      imageBitmap = BitmapFactory.decodeStream(imageInputStream, null, options);
+    } catch(FileNotFoundException ex){
+      responseHelper.invokeError(callback, "Could not find file");
+      callback = null;
+      return;
+    }
+
+
     int initialWidth = options.outWidth;
     int initialHeight = options.outHeight;
-    updatedResultResponse(uri, imageConfig.original.getAbsolutePath());
+    try {
+      InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+      updatedResultResponse(imageInputStream);
+    } catch(FileNotFoundException ex){
+      responseHelper.invokeError(callback, "Could not find file");
+      callback = null;
+      return;
+    }
 
     // don't create a new file if contraint are respected
     if (imageConfig.useOriginal(initialWidth, initialHeight, result.currentRotation))
     {
       responseHelper.putInt("width", initialWidth);
       responseHelper.putInt("height", initialHeight);
-      fileScan(reactContext, imageConfig.original.getAbsolutePath());
     }
     else
     {
-      imageConfig = getResizedImage(reactContext, this.options, imageConfig, initialWidth, initialHeight, requestCode);
-      if (imageConfig.resized == null)
+      Bitmap resizedImage = null;
+      try {
+        InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+        resizedImage = getResizedImage(imageInputStream, imageConfig, initialWidth, initialHeight);
+      } catch(FileNotFoundException ex){
+        responseHelper.invokeError(callback, "Could not find file");
+        callback = null;
+        return;
+      }
+
+      if (resizedImage == null)
       {
-        removeUselessFiles(requestCode, imageConfig);
         responseHelper.putString("error", "Can't resize the image");
       }
       else
       {
-        uri = Uri.fromFile(imageConfig.resized);
-        BitmapFactory.decodeFile(imageConfig.resized.getAbsolutePath(), options);
-        responseHelper.putInt("width", options.outWidth);
-        responseHelper.putInt("height", options.outHeight);
-
-        updatedResultResponse(uri, imageConfig.resized.getAbsolutePath());
-        fileScan(reactContext, imageConfig.resized.getAbsolutePath());
+        responseHelper.putInt("width", resizedImage.getWidth());
+        responseHelper.putInt("height", resizedImage.getHeight());
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        resizedImage.compress(Bitmap.CompressFormat.JPEG, imageConfig.quality, bos);
+        byte[] bitmapdata = bos.toByteArray();
+        ByteArrayInputStream bs = new ByteArrayInputStream(bitmapdata);
+        updatedResultResponse(bs);
+        resizedImage.recycle();
+        resizedImage = null;
       }
     }
-
-    if (imageConfig.saveToCameraRoll && requestCode == REQUEST_LAUNCH_IMAGE_CAPTURE)
-    {
-      final RolloutPhotoResult rolloutResult = rolloutPhotoFromCamera(imageConfig);
-
-      if (rolloutResult.error == null)
-      {
-        imageConfig = rolloutResult.imageConfig;
-        uri = Uri.fromFile(imageConfig.getActualFile());
-        updatedResultResponse(uri, imageConfig.getActualFile().getAbsolutePath());
-      }
-      else
-      {
-        removeUselessFiles(requestCode, imageConfig);
-        final String errorMessage = new StringBuilder("Error moving image to camera roll: ")
-                .append(rolloutResult.error.getMessage()).toString();
-        responseHelper.putString("error", errorMessage);
-        return;
-      }
+    if(imageBitmap != null){
+      imageBitmap.recycle();
+      imageBitmap = null;
     }
+
 
     responseHelper.invokeResponse(callback);
     callback = null;
@@ -554,17 +557,9 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
             && requestCode != REQUEST_LAUNCH_VIDEO_LIBRARY && requestCode != REQUEST_LAUNCH_VIDEO_CAPTURE);
   }
 
-  private void updatedResultResponse(@Nullable final Uri uri,
-                                     @NonNull final String path)
+  private void updatedResultResponse(@NonNull final InputStream inputStream)
   {
-    responseHelper.putString("uri", uri.toString());
-    responseHelper.putString("path", path);
-
-    if (!noData) {
-      responseHelper.putString("data", getBase64StringFromFile(path));
-    }
-
-    putExtraFileInfo(path, responseHelper);
+      responseHelper.putString("data", getBase64StringFromInputStream(inputStream));
   }
 
   private boolean permissionsCheck(@NonNull final Activity activity,
@@ -681,49 +676,7 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
       || reactContext.getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
   }
 
-  private @NonNull String getRealPathFromURI(@NonNull final Uri uri) {
-    return RealPathUtil.getRealPathFromURI(reactContext, uri);
-  }
-
-  /**
-   * Create a file from uri to allow image picking of image in disk cache
-   * (Exemple: facebook image, google image etc..)
-   *
-   * @doc =>
-   * https://github.com/nostra13/Android-Universal-Image-Loader#load--display-task-flow
-   *
-   * @param uri
-   * @return File
-   * @throws Exception
-   */
-  private File createFileFromURI(Uri uri) throws Exception {
-    File file = new File(reactContext.getExternalCacheDir(), "photo-" + uri.getLastPathSegment());
-    InputStream input = reactContext.getContentResolver().openInputStream(uri);
-    OutputStream output = new FileOutputStream(file);
-
-    try {
-      byte[] buffer = new byte[4 * 1024];
-      int read;
-      while ((read = input.read(buffer)) != -1) {
-        output.write(buffer, 0, read);
-      }
-      output.flush();
-    } finally {
-      output.close();
-      input.close();
-    }
-
-    return file;
-  }
-
-  private String getBase64StringFromFile(String absoluteFilePath) {
-    InputStream inputStream = null;
-    try {
-      inputStream = new FileInputStream(new File(absoluteFilePath));
-    } catch (FileNotFoundException e) {
-      e.printStackTrace();
-    }
-
+  private String getBase64StringFromInputStream(InputStream inputStream) {
     byte[] bytes;
     byte[] buffer = new byte[8192];
     int bytesRead;
@@ -737,31 +690,6 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
     }
     bytes = output.toByteArray();
     return Base64.encodeToString(bytes, Base64.NO_WRAP);
-  }
-
-  private void putExtraFileInfo(@NonNull final String path,
-                                @NonNull final ResponseHelper responseHelper)
-  {
-    try {
-      // size && filename
-      File f = new File(path);
-      responseHelper.putDouble("fileSize", f.length());
-      responseHelper.putString("fileName", f.getName());
-      // type
-      String extension = MimeTypeMap.getFileExtensionFromUrl(path);
-      String fileName = f.getName();
-      if (extension != "") {
-        responseHelper.putString("type", MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension));
-      } else {
-        int i = fileName.lastIndexOf('.');
-        if (i > 0) {
-          extension = fileName.substring(i+1);
-          responseHelper.putString("type", MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension));
-        }
-      }
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
   }
 
   private void parseOptions(final ReadableMap options) {

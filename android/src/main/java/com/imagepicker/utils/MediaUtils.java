@@ -5,24 +5,18 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.media.ExifInterface;
-import android.media.MediaScannerConnection;
-import android.net.Uri;
 import android.os.Environment;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import android.util.Log;
 
 import com.facebook.react.bridge.ReadableMap;
-import com.imagepicker.ImagePickerModule;
 import com.imagepicker.ResponseHelper;
 import com.imagepicker.media.ImageConfig;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.channels.FileChannel;
+import java.io.InputStream;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.TimeZone;
@@ -91,19 +85,16 @@ public class MediaUtils
     /**
      * Create a resized image to fulfill the maxWidth/maxHeight, quality and rotation values
      *
-     * @param context
-     * @param options
+     * @param imageInputStream
      * @param imageConfig
      * @param initialWidth
      * @param initialHeight
      * @return updated ImageConfig
      */
-    public static @NonNull ImageConfig getResizedImage(@NonNull final Context context,
-                                                       @NonNull final ReadableMap options,
+    public static @NonNull Bitmap getResizedImage(@NonNull final InputStream imageInputStream,
                                                        @NonNull final ImageConfig imageConfig,
                                                        int initialWidth,
-                                                       int initialHeight,
-                                                       final int requestCode)
+                                                       int initialHeight)
     {
         BitmapFactory.Options imageOptions = new BitmapFactory.Options();
         imageOptions.inScaled = false;
@@ -118,11 +109,11 @@ public class MediaUtils
             }
         }
 
-        Bitmap photo = BitmapFactory.decodeFile(imageConfig.original.getAbsolutePath(), imageOptions);
+        Bitmap photo = BitmapFactory.decodeStream(imageInputStream, null, imageOptions);
 
         if (photo == null)
         {
-            return imageConfig;
+            return null;
         }
 
         ImageConfig result = imageConfig;
@@ -151,7 +142,8 @@ public class MediaUtils
         ExifInterface exif;
         try
         {
-            exif = new ExifInterface(result.original.getAbsolutePath());
+            imageInputStream.reset();
+            exif = new ExifInterface(imageInputStream);
 
             int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0);
 
@@ -177,94 +169,19 @@ public class MediaUtils
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         scaledPhoto.compress(Bitmap.CompressFormat.JPEG, result.quality, bytes);
 
-        final boolean forceLocal = requestCode == REQUEST_LAUNCH_IMAGE_CAPTURE;
-        final File resized = createNewFile(context, options, !forceLocal);
+        return scaledPhoto;
 
-        if (resized == null)
-        {
-            if (photo != null)
-            {
-                photo.recycle();
-                photo = null;
-            }
-            if (scaledPhoto != null)
-            {
-                scaledPhoto.recycle();
-                scaledPhoto = null;
-            }
-            return imageConfig;
-        }
-
-        result = result.withResizedFile(resized);
-
-        try (FileOutputStream fos = new FileOutputStream(result.resized))
-        {
-            bytes.writeTo(fos);
-        }
-        catch (IOException e)
-        {
-            e.printStackTrace();
-        }
-
-        if (photo != null)
-        {
-            photo.recycle();
-            photo = null;
-        }
-        if (scaledPhoto != null)
-        {
-            scaledPhoto.recycle();
-            scaledPhoto = null;
-        }
-        return result;
     }
 
-    public static void removeUselessFiles(final int requestCode,
-                                          @NonNull final ImageConfig imageConfig)
-    {
-        if (requestCode != ImagePickerModule.REQUEST_LAUNCH_IMAGE_CAPTURE)
-        {
-            return;
-        }
 
-        if (imageConfig.original != null && imageConfig.original.exists())
-        {
-            imageConfig.original.delete();
-        }
-
-        if (imageConfig.resized != null && imageConfig.resized.exists())
-        {
-            imageConfig.resized.delete();
-        }
-    }
-
-    public static void fileScan(@Nullable final Context reactContext,
-                                @NonNull final String path)
-    {
-        if (reactContext == null)
-        {
-            return;
-        }
-        MediaScannerConnection.scanFile(reactContext,
-                new String[] { path }, null,
-                new MediaScannerConnection.OnScanCompletedListener()
-                {
-                    public void onScanCompleted(String path, Uri uri)
-                    {
-                        Log.i("TAG", new StringBuilder("Finished scanning ").append(path).toString());
-                    }
-                });
-    }
-
-    public static ReadExifResult readExifInterface(@NonNull ResponseHelper responseHelper,
-                                                   @NonNull final ImageConfig imageConfig)
+    public static ReadExifResult readExifInterface(@NonNull InputStream inputStream, @NonNull ResponseHelper responseHelper)
     {
         ReadExifResult result;
         int currentRotation = 0;
 
         try
         {
-            ExifInterface exif = new ExifInterface(imageConfig.original.getAbsolutePath());
+            ExifInterface exif = new ExifInterface(inputStream);
 
             // extract lat, long, and timestamp and add to the response
             float[] latlng = new float[2];
@@ -318,84 +235,6 @@ public class MediaUtils
 
         return result;
     }
-
-    public static @Nullable RolloutPhotoResult rolloutPhotoFromCamera(@NonNull final ImageConfig imageConfig)
-    {
-        RolloutPhotoResult result = null;
-        final File oldFile = imageConfig.resized == null ? imageConfig.original: imageConfig.resized;
-        final File newDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM);
-        final File newFile = new File(newDir.getPath(), oldFile.getName());
-
-        try
-        {
-            moveFile(oldFile, newFile);
-            ImageConfig newImageConfig;
-            if (imageConfig.resized != null)
-            {
-                newImageConfig = imageConfig.withResizedFile(newFile);
-            }
-            else
-            {
-                newImageConfig = imageConfig.withOriginalFile(newFile);
-            }
-            result = new RolloutPhotoResult(newImageConfig, null);
-        }
-        catch (IOException e)
-        {
-            e.printStackTrace();
-            result = new RolloutPhotoResult(imageConfig, e);
-        }
-        return result;
-    }
-
-    /**
-     * Move a file from one location to another.
-     *
-     * This is done via copy + deletion, because Android will throw an error
-     * if you try to move a file across mount points, e.g. to the SD card.
-     */
-    private static void moveFile(@NonNull final File oldFile,
-                                 @NonNull final File newFile) throws IOException
-    {
-        FileChannel oldChannel = null;
-        FileChannel newChannel = null;
-
-        try
-        {
-            oldChannel = new FileInputStream(oldFile).getChannel();
-            newChannel = new FileOutputStream(newFile).getChannel();
-            oldChannel.transferTo(0, oldChannel.size(), newChannel);
-
-            oldFile.delete();
-        }
-        finally
-        {
-            try
-            {
-                if (oldChannel != null) oldChannel.close();
-                if (newChannel != null) newChannel.close();
-            }
-            catch (IOException e)
-            {
-                e.printStackTrace();
-            }
-        }
-    }
-
-
-    public static class RolloutPhotoResult
-    {
-        public final ImageConfig imageConfig;
-        public final Throwable error;
-
-        public RolloutPhotoResult(@NonNull final ImageConfig imageConfig,
-                                  @Nullable final Throwable error)
-        {
-            this.imageConfig = imageConfig;
-            this.error = error;
-        }
-    }
-
 
     public static class ReadExifResult
     {

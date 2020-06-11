@@ -2,6 +2,8 @@ package com.imagepicker.media;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
+import android.net.Uri;
 import android.webkit.MimeTypeMap;
 
 import com.facebook.react.bridge.ReadableMap;
@@ -14,24 +16,18 @@ import java.io.File;
 
 public class ImageConfig
 {
-    public @Nullable final File original;
-    public @Nullable final File resized;
     public final int maxWidth;
     public final int maxHeight;
     public final int quality;
     public final int rotation;
     public final boolean saveToCameraRoll;
 
-    public ImageConfig(@Nullable final File original,
-                       @Nullable final File resized,
-                       final int maxWidth,
+    public ImageConfig(final int maxWidth,
                        final int maxHeight,
                        final int quality,
                        final int rotation,
                        final boolean saveToCameraRoll)
     {
-        this.original = original;
-        this.resized = resized;
         this.maxWidth = maxWidth;
         this.maxHeight = maxHeight;
         this.quality = quality;
@@ -41,8 +37,7 @@ public class ImageConfig
 
     public @NonNull ImageConfig withMaxWidth(final int maxWidth)
     {
-        return new ImageConfig(
-                this.original, this.resized, maxWidth,
+        return new ImageConfig(maxWidth,
                 this.maxHeight, this.quality, this.rotation,
                 this.saveToCameraRoll
         );
@@ -50,8 +45,7 @@ public class ImageConfig
 
     public @NonNull ImageConfig withMaxHeight(final int maxHeight)
     {
-        return new ImageConfig(
-                this.original, this.resized, this.maxWidth,
+        return new ImageConfig(this.maxWidth,
                 maxHeight, this.quality, this.rotation,
                 this.saveToCameraRoll
         );
@@ -60,8 +54,7 @@ public class ImageConfig
 
     public @NonNull ImageConfig withQuality(final int quality)
     {
-        return new ImageConfig(
-                this.original, this.resized, this.maxWidth,
+        return new ImageConfig(this.maxWidth,
                 this.maxHeight, quality, this.rotation,
                 this.saveToCameraRoll
         );
@@ -69,44 +62,34 @@ public class ImageConfig
 
     public @NonNull ImageConfig withRotation(final int rotation)
     {
-        return new ImageConfig(
-                this.original, this.resized, this.maxWidth,
+        return new ImageConfig(this.maxWidth,
                 this.maxHeight, this.quality, rotation,
                 this.saveToCameraRoll
         );
     }
 
-    public @NonNull ImageConfig withOriginalFile(@Nullable final File original)
+    public @NonNull ImageConfig withUri(@Nullable final Uri uri)
     {
-        if (original != null) {
+        if (uri!= null) {
             //if it is a GIF file, always set quality to 100 to prevent compression
-            String extension = MimeTypeMap.getFileExtensionFromUrl(original.getAbsolutePath());
+            String extension = MimeTypeMap.getFileExtensionFromUrl(uri.getPath());
             int quality = this.quality;
             if(extension.contains("gif")){
                 quality = 100;
             }
         }
 
-        return new ImageConfig(
-                original, this.resized, this.maxWidth,
+        return new ImageConfig(this.maxWidth,
                 this.maxHeight, quality, this.rotation,
                 this.saveToCameraRoll
         );
     }
 
-    public @NonNull ImageConfig withResizedFile(@Nullable final File resized)
-    {
-        return new ImageConfig(
-                this.original, resized, this.maxWidth,
-                this.maxHeight, this.quality, this.rotation,
-                this.saveToCameraRoll
-        );
-    }
 
     public @NonNull ImageConfig withSaveToCameraRoll(@Nullable final boolean saveToCameraRoll)
     {
         return new ImageConfig(
-                this.original, this.resized, this.maxWidth,
+                this.maxWidth,
                 this.maxHeight, this.quality, this.rotation,
                 saveToCameraRoll
         );
@@ -143,7 +126,7 @@ public class ImageConfig
                 saveToCameraRoll = storageOptions.getBoolean("cameraRoll");
             }
         }
-        return new ImageConfig(this.original, this.resized, maxWidth, maxHeight, quality, rotation, saveToCameraRoll);
+        return new ImageConfig(maxWidth, maxHeight, quality, rotation, saveToCameraRoll);
     }
 
     public boolean useOriginal(int initialWidth,
@@ -153,10 +136,5 @@ public class ImageConfig
         return ((initialWidth < maxWidth && maxWidth > 0) || maxWidth == 0) &&
                 ((initialHeight < maxHeight && maxHeight > 0) || maxHeight == 0) &&
                 quality == 100 && (rotation == 0 || currentRotation == rotation);
-    }
-
-    public File getActualFile()
-    {
-        return resized != null ? resized: original;
     }
 }
