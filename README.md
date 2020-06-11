@@ -1,3 +1,7 @@
+# NOTE: This is a fork of the original React Native Image Picker. 
+
+We do not offer support for changes in the libraries. The overwhelming majority of the code is from the original authors of React Native Image Picker, any changes to attribution are only to prevent support requests for this work being accidentally forwarded to the original authors.
+
 # React Native Image Picker
 
 [![npm version](https://badge.fury.io/js/react-native-image-picker.svg)](https://badge.fury.io/js/react-native-image-picker)
