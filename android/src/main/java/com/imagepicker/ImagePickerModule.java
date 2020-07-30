@@ -20,6 +20,7 @@ import androidx.appcompat.app.AlertDialog;
 
 import android.util.Base64;
 import android.content.pm.PackageManager;
+import android.util.Base64OutputStream;
 
 import com.facebook.react.ReactActivity;
 import com.facebook.react.bridge.ActivityEventListener;
@@ -43,6 +44,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
 import java.lang.ref.WeakReference;
 import java.util.List;
 
@@ -471,27 +473,30 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
 
     int initialWidth = options.outWidth;
     int initialHeight = options.outHeight;
-    try {
-      InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
-      updatedResultResponse(imageInputStream);
-    } catch(FileNotFoundException ex){
-      responseHelper.invokeError(callback, "Could not find file");
-      callback = null;
-      return;
-    }
+
 
     // don't create a new file if contraint are respected
     if (imageConfig.useOriginal(initialWidth, initialHeight, result.currentRotation))
     {
       responseHelper.putInt("width", initialWidth);
       responseHelper.putInt("height", initialHeight);
+
+      try {
+        InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+        updatedResultResponse(imageInputStream);
+      } catch(FileNotFoundException ex){
+        responseHelper.invokeError(callback, "Could not find file");
+        callback = null;
+        return;
+      }
     }
     else
     {
       Bitmap resizedImage = null;
+      ImageConfig rotatedImageConfig = imageConfig.withRotation(result.currentRotation);
       try {
         InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
-        resizedImage = getResizedImage(imageInputStream, imageConfig, initialWidth, initialHeight);
+        resizedImage = getResizedImage(imageInputStream, rotatedImageConfig, initialWidth, initialHeight);
       } catch(FileNotFoundException ex){
         responseHelper.invokeError(callback, "Could not find file");
         callback = null;
@@ -680,16 +685,28 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
     byte[] bytes;
     byte[] buffer = new byte[8192];
     int bytesRead;
+
     ByteArrayOutputStream output = new ByteArrayOutputStream();
+    Base64OutputStream base64Output = new Base64OutputStream(output, Base64.DEFAULT | Base64.NO_WRAP);
+
     try {
       while ((bytesRead = inputStream.read(buffer)) != -1) {
-        output.write(buffer, 0, bytesRead);
+        base64Output.write(buffer, 0, bytesRead);
       }
     } catch (IOException e) {
       e.printStackTrace();
     }
-    bytes = output.toByteArray();
-    return Base64.encodeToString(bytes, Base64.NO_WRAP);
+
+
+    try {
+      base64Output.close();
+      bytes = output.toByteArray();
+      return new String(bytes, "UTF-8");
+    } catch(UnsupportedEncodingException uex){
+      return null;
+    } catch(IOException ioex){
+      return null;
+    }
   }
 
   private void parseOptions(final ReadableMap options) {
