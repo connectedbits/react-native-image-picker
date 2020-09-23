@@ -7,14 +7,17 @@
  * @format
  */
 
-import {NativeModules} from 'react-native';
+import {NativeModules, Platform} from 'react-native';
 import {ImagePickerNativeModule} from './privateTypes';
 
 const ImagePickerManager: ImagePickerNativeModule | undefined =
   NativeModules.ImagePickerManager;
 
 // Produce an error if we don't have the native module
-if (!ImagePickerManager) {
+if (
+  !ImagePickerManager &&
+  (Platform.OS === 'android' || Platform.OS === 'ios')
+) {
   throw new Error(`react-native-image-picker: NativeModule.ImagePickerManager is null. To fix this issue try these steps:
 • Run \`react-native link react-native-image-picker\` in the project root.
 • Rebuild and re-run the app.
