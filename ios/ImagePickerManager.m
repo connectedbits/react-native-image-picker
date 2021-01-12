@@ -208,18 +208,14 @@ RCT_EXPORT_METHOD(showImagePicker:(NSDictionary *)options callback:(RCTResponseS
         }];
     }
     else { // RNImagePickerTargetLibrarySingleImage
-      if (@available(iOS 11.0, *)) {
-        showPickerViewController();
-      } else {
-        [self checkPhotosPermissions:^(BOOL granted) {
-          if (!granted) {
-            self.callback(@[@{@"error": @"Photo library permissions not granted"}]);
-            return;
-          }
+      [self checkPhotosPermissions:^(BOOL granted) {
+        if (!granted) {
+          self.callback(@[@{@"error": @"Photo library permissions not granted"}]);
+          return;
+        }
 
-          showPickerViewController();
-        }];
-      }
+        showPickerViewController();
+      }];
     }
 }
 
