@@ -226,106 +226,91 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
   @ReactMethod
   public void launchCamera(final ReadableMap options, final Callback callback)
   {
-    try {
-      permissionRequestCallback = callback;
+    permissionRequestCallback = callback;
 
-      if (!isCameraAvailable())
+    if (!isCameraAvailable())
+    {
+      responseHelper.invokeError(callback, "Camera not available");
+      return;
+    }
+
+    final Activity currentActivity = getCurrentActivity();
+    if (currentActivity == null)
+    {
+      responseHelper.invokeError(callback, "can't find current Activity");
+      return;
+    }
+
+    this.callback = callback;
+    this.options = options;
+
+    if (!permissionsCheck(currentActivity, callback, REQUEST_PERMISSIONS_FOR_CAMERA))
+    {
+      return;
+    }
+
+    parseOptions(this.options);
+
+    int requestCode;
+    Intent cameraIntent;
+
+    if (pickVideo)
+    {
+      requestCode = REQUEST_LAUNCH_VIDEO_CAPTURE;
+      cameraIntent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+      cameraIntent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, videoQuality);
+      if (videoDurationLimit > 0)
       {
-        responseHelper.invokeError(callback, "Camera not available");
+        cameraIntent.putExtra(MediaStore.EXTRA_DURATION_LIMIT, videoDurationLimit);
+      }
+    }
+    else
+    {
+      requestCode = REQUEST_LAUNCH_IMAGE_CAPTURE;
+      cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+
+      final File original = createNewFile(reactContext, this.options, false);
+
+      if (original != null) {
+        cameraCaptureURI = RealPathUtil.compatUriFromFile(reactContext, original);
+      }else {
+        responseHelper.invokeError(callback, "Couldn't get file path for photo");
         return;
       }
-
-      final Activity currentActivity = getCurrentActivity();
-      if (currentActivity == null)
+      if (cameraCaptureURI == null)
       {
-        responseHelper.invokeError(callback, "can't find current Activity");
+        responseHelper.invokeError(callback, "Couldn't get file path for photo");
         return;
       }
+      cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraCaptureURI);
+    }
 
-      this.callback = callback;
-      this.options = options;
-      try {
-        if (!permissionsCheck(currentActivity, REQUEST_PERMISSIONS_FOR_CAMERA))
-        {
-          return;
-        }
-      } catch(Exception ex){
-        if(callback != null){
-          responseHelper.invokeError(callback, "Error checking permissions, " + ex.getLocalizedMessage());
-        }
-      }
+    if (cameraIntent.resolveActivity(reactContext.getPackageManager()) == null)
+    {
+      responseHelper.invokeError(callback, "Cannot launch camera");
+      return;
+    }
 
-
-      parseOptions(this.options);
-
-      int requestCode;
-      Intent cameraIntent;
-
-      if (pickVideo)
-      {
-        requestCode = REQUEST_LAUNCH_VIDEO_CAPTURE;
-        cameraIntent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-        cameraIntent.putExtra(MediaStore.EXTRA_VIDEO_QUALITY, videoQuality);
-        if (videoDurationLimit > 0)
-        {
-          cameraIntent.putExtra(MediaStore.EXTRA_DURATION_LIMIT, videoDurationLimit);
-        }
-      }
-      else
-      {
-        requestCode = REQUEST_LAUNCH_IMAGE_CAPTURE;
-        cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-
-        final File original = createNewFile(reactContext, this.options, false);
-
-        if (original != null) {
-          cameraCaptureURI = RealPathUtil.compatUriFromFile(reactContext, original);
-        }else {
-          responseHelper.invokeError(callback, "Couldn't get file path for photo");
-          return;
-        }
-        if (cameraCaptureURI == null)
-        {
-          responseHelper.invokeError(callback, "Couldn't get file path for photo");
-          return;
-        }
-        cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraCaptureURI);
-      }
-
-      if (cameraIntent.resolveActivity(reactContext.getPackageManager()) == null)
-      {
-        responseHelper.invokeError(callback, "Cannot launch camera");
-        return;
-      }
-
-      // Workaround for Android bug.
-      // grantUriPermission also needed for KITKAT,
-      // see https://code.google.com/p/android/issues/detail?id=76683
-      if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.KITKAT) {
-        List<ResolveInfo> resInfoList = reactContext.getPackageManager().queryIntentActivities(cameraIntent, PackageManager.MATCH_DEFAULT_ONLY);
-        for (ResolveInfo resolveInfo : resInfoList) {
-          if(resolveInfo.activityInfo != null){
-            String packageName = resolveInfo.activityInfo.packageName;
-            reactContext.grantUriPermission(packageName, cameraCaptureURI, Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          }
-        }
-      }
-
-      try
-      {
-        currentActivity.startActivityForResult(cameraIntent, requestCode);
-      }
-      catch (ActivityNotFoundException e)
-      {
-        e.printStackTrace();
-        responseHelper.invokeError(callback, "Cannot launch camera, activity not found, " + e.getLocalizedMessage());
-      }
-    } catch(Exception ex){
-      if(callback != null){
-        responseHelper.invokeError(callback, "Cannot launch camera, " + ex.getLocalizedMessage());
+    // Workaround for Android bug.
+    // grantUriPermission also needed for KITKAT,
+    // see https://code.google.com/p/android/issues/detail?id=76683
+    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.KITKAT) {
+      List<ResolveInfo> resInfoList = reactContext.getPackageManager().queryIntentActivities(cameraIntent, PackageManager.MATCH_DEFAULT_ONLY);
+      for (ResolveInfo resolveInfo : resInfoList) {
+        String packageName = resolveInfo.activityInfo.packageName;
+        reactContext.grantUriPermission(packageName, cameraCaptureURI, Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
       }
     }
 
+    try
+    {
+      currentActivity.startActivityForResult(cameraIntent, requestCode);
+    }
+    catch (ActivityNotFoundException e)
+    {
+      e.printStackTrace();
+      responseHelper.invokeError(callback, "Cannot launch camera");
+    }
   }
 
   public void launchImageLibrary()
@@ -336,83 +321,70 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
   @ReactMethod
   public void launchImageLibrary(final ReadableMap options, final Callback callback)
   {
-    try {
-      permissionRequestCallback = callback;
+    permissionRequestCallback = callback;
 
-      final Activity currentActivity = getCurrentActivity();
-      if (currentActivity == null) {
-        responseHelper.invokeError(callback, "can't find current Activity");
-        return;
-      }
+    final Activity currentActivity = getCurrentActivity();
+    if (currentActivity == null) {
+      responseHelper.invokeError(callback, "can't find current Activity");
+      return;
+    }
 
-      this.callback = callback;
-      this.options = options;
+    this.callback = callback;
+    this.options = options;
 
-      try {
-        if (!permissionsCheck(currentActivity, REQUEST_PERMISSIONS_FOR_LIBRARY))
-        {
-          return;
-        }
-      } catch(Exception ex){
-        if(callback != null){
-          responseHelper.invokeError(callback, "Error checking permissions, " + ex.getLocalizedMessage());
-        }
-      }
+    if (!permissionsCheck(currentActivity, callback, REQUEST_PERMISSIONS_FOR_LIBRARY))
+    {
+      return;
+    }
 
-      parseOptions(this.options);
+    parseOptions(this.options);
 
-      int requestCode;
-      Intent libraryIntent;
-      if (pickVideo)
+    int requestCode;
+    Intent libraryIntent;
+    if (pickVideo)
+    {
+      requestCode = REQUEST_LAUNCH_VIDEO_LIBRARY;
+      libraryIntent = new Intent(Intent.ACTION_GET_CONTENT);
+      libraryIntent.setType("video/*");
+      libraryIntent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+      libraryIntent.putExtra(Intent.CATEGORY_OPENABLE, true);
+    }
+    else
+    {
+      requestCode = REQUEST_LAUNCH_IMAGE_LIBRARY;
+      libraryIntent = new Intent(Intent.ACTION_GET_CONTENT);
+      libraryIntent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+      libraryIntent.putExtra(Intent.CATEGORY_OPENABLE, true);
+
+      if (pickBoth)
       {
-        requestCode = REQUEST_LAUNCH_VIDEO_LIBRARY;
-        libraryIntent = new Intent(Intent.ACTION_GET_CONTENT);
-        libraryIntent.setType("video/*");
-        libraryIntent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
-        libraryIntent.putExtra(Intent.CATEGORY_OPENABLE, true);
-      }
-      else
-      {
-        requestCode = REQUEST_LAUNCH_IMAGE_LIBRARY;
-        libraryIntent = new Intent(Intent.ACTION_GET_CONTENT);
-        libraryIntent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
-        libraryIntent.putExtra(Intent.CATEGORY_OPENABLE, true);
-
-        if (pickBoth)
-        {
-          libraryIntent.setType("image/* video/*");
-        } else {
-          libraryIntent.setType("image/*");
-        }
-      }
-
-      if (libraryIntent.resolveActivity(reactContext.getPackageManager()) == null)
-      {
-        responseHelper.invokeError(callback, "Cannot launch photo library");
-        return;
-      }
-
-      try
-      {
-        String chooseWhichLibraryTitle = null;
-        if (ReadableMapUtils.hasAndNotEmptyString(options, "chooseWhichLibraryTitle"))
-        {
-          chooseWhichLibraryTitle = options.getString("chooseWhichLibraryTitle");
-        }
-
-        currentActivity.startActivityForResult(Intent.createChooser(libraryIntent, chooseWhichLibraryTitle), requestCode);
-      }
-      catch (ActivityNotFoundException e)
-      {
-        e.printStackTrace();
-        responseHelper.invokeError(callback, "Cannot launch photo library, activity not found, " + e.getLocalizedMessage());
-      }
-    } catch(Exception ex){
-      if(callback != null){
-        responseHelper.invokeError(callback, "Cannot launch photo library, " + ex.getLocalizedMessage());
+        libraryIntent.setType("image/* video/*");
+      } else {
+        libraryIntent.setType("image/*");
       }
     }
 
+    if (libraryIntent.resolveActivity(reactContext.getPackageManager()) == null)
+    {
+      responseHelper.invokeError(callback, "Cannot launch photo library");
+      return;
+    }
+
+    try
+    {
+      String chooseWhichLibraryTitle = null;
+      if (ReadableMapUtils.hasAndNotEmptyString(options, "chooseWhichLibraryTitle"))
+      {
+        chooseWhichLibraryTitle = options.getString("chooseWhichLibraryTitle");
+      }
+
+      currentActivity.startActivityForResult(Intent.createChooser(libraryIntent, chooseWhichLibraryTitle), requestCode);
+    }
+    catch (ActivityNotFoundException e)
+    {
+      e.printStackTrace();
+      responseHelper.invokeError(callback, "Cannot launch photo library");
+    }
   }
 
   @Override
@@ -422,144 +394,146 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
     {
       return;
     }
-    try {
 
-      responseHelper.cleanResponse();
+    responseHelper.cleanResponse();
 
-      // user cancel
-      if (resultCode != Activity.RESULT_OK)
-      {
-        responseHelper.invokeCancel(callback);
-        return;
-      }
+    // user cancel
+    if (resultCode != Activity.RESULT_OK)
+    {
+      responseHelper.invokeCancel(callback);
+      callback = null;
+      return;
+    }
 
-      Uri uri = null;
-      switch (requestCode)
-      {
-        case REQUEST_LAUNCH_IMAGE_CAPTURE:
-          uri = cameraCaptureURI;
-          break;
+    Uri uri = null;
+    switch (requestCode)
+    {
+      case REQUEST_LAUNCH_IMAGE_CAPTURE:
+        uri = cameraCaptureURI;
+        break;
 
-        case REQUEST_LAUNCH_IMAGE_LIBRARY:
-          uri = data.getData();
+      case REQUEST_LAUNCH_IMAGE_LIBRARY:
+        uri = data.getData();
           if(uri == null){
             responseHelper.putString("error", "Could not read photo");
             responseHelper.invokeResponse(callback);
+            callback = null;
             return;
           }
-          break;
+        break;
 
-        case REQUEST_LAUNCH_VIDEO_LIBRARY:
-          responseHelper.putString("uri", data.getData().toString());
-          responseHelper.invokeResponse(callback);
-          return;
+      case REQUEST_LAUNCH_VIDEO_LIBRARY:
+        responseHelper.putString("uri", data.getData().toString());
+        responseHelper.invokeResponse(callback);
+        callback = null;
+        return;
 
-        case REQUEST_LAUNCH_VIDEO_CAPTURE:
-          responseHelper.putString("uri", data.getData().toString());
-          responseHelper.invokeResponse(callback);
-          return;
+      case REQUEST_LAUNCH_VIDEO_CAPTURE:
+        responseHelper.putString("uri", data.getData().toString());
+        responseHelper.invokeResponse(callback);
+        callback = null;
+        return;
+    }
+
+    ReadExifResult result = null;
+    try {
+      InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+      if(imageInputStream != null){
+        result = readExifInterface(imageInputStream, responseHelper);
       }
+    } catch(IOException ex){
+      responseHelper.invokeError(callback, ex.getMessage());
+      callback = null;
+      return;
+    }
+    if (result == null) {
+      responseHelper.invokeError(callback, "Image could not be read");
+      callback = null;
+      return;
+    }
+    if (result.error != null)
+    {
+      responseHelper.invokeError(callback, result.error.getMessage());
+      callback = null;
+      return;
+    }
 
-      ReadExifResult result = null;
+    BitmapFactory.Options options = new BitmapFactory.Options();
+    options.inJustDecodeBounds = true;
+    Bitmap imageBitmap = null;
+    try {
+      InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+      imageBitmap = BitmapFactory.decodeStream(imageInputStream, null, options);
+    } catch(FileNotFoundException ex){
+      responseHelper.invokeError(callback, "Could not find file");
+      callback = null;
+      return;
+    }
+
+
+    int initialWidth = options.outWidth;
+    int initialHeight = options.outHeight;
+
+
+    // don't create a new file if contraint are respected
+    if (imageConfig.useOriginal(initialWidth, initialHeight, result.currentRotation))
+    {
+      responseHelper.putInt("width", initialWidth);
+      responseHelper.putInt("height", initialHeight);
+
       try {
         InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
-        if(imageInputStream != null){
-          result = readExifInterface(imageInputStream, responseHelper);
-        }
-      } catch(IOException ex){
-        responseHelper.invokeError(callback, ex.getMessage());
-        return;
-      }
-      if (result == null) {
-        responseHelper.invokeError(callback, "Image could not be read");
-        return;
-      }
-      if (result.error != null)
-      {
-        responseHelper.invokeError(callback, result.error.getMessage());
-        return;
-      }
-
-      BitmapFactory.Options options = new BitmapFactory.Options();
-      options.inJustDecodeBounds = true;
-      Bitmap imageBitmap = null;
-      try {
-        InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
-        imageBitmap = BitmapFactory.decodeStream(imageInputStream, null, options);
+        updatedResultResponse(imageInputStream);
       } catch(FileNotFoundException ex){
         responseHelper.invokeError(callback, "Could not find file");
+        callback = null;
+        return;
+      }
+    }
+    else
+    {
+      Bitmap resizedImage = null;
+      ImageConfig rotatedImageConfig = imageConfig.withRotation(result.currentRotation);
+      try {
+        InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
+        resizedImage = getResizedImage(imageInputStream, rotatedImageConfig, initialWidth, initialHeight);
+      } catch(FileNotFoundException ex){
+        responseHelper.invokeError(callback, "Could not find file");
+        callback = null;
         return;
       }
 
-
-      int initialWidth = options.outWidth;
-      int initialHeight = options.outHeight;
-
-
-      // don't create a new file if contraint are respected
-      if (imageConfig.useOriginal(initialWidth, initialHeight, result.currentRotation))
+      if (resizedImage == null)
       {
-        responseHelper.putInt("width", initialWidth);
-        responseHelper.putInt("height", initialHeight);
-
-        try {
-          InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
-          updatedResultResponse(imageInputStream);
-        } catch(FileNotFoundException ex){
-          responseHelper.invokeError(callback, "Could not find file");
-          return;
-        }
+        responseHelper.putString("error", "Can't resize the image");
       }
       else
       {
-        Bitmap resizedImage = null;
-        ImageConfig rotatedImageConfig = imageConfig.withRotation(result.currentRotation);
-        try {
-          InputStream imageInputStream = reactContext.getContentResolver().openInputStream(uri);
-          resizedImage = getResizedImage(imageInputStream, rotatedImageConfig, initialWidth, initialHeight);
-        } catch(FileNotFoundException ex){
-          responseHelper.invokeError(callback, "Could not find file");
-          return;
-        }
-
-        if (resizedImage == null)
-        {
-          responseHelper.putString("error", "Can't resize the image");
-        }
-        else
-        {
-          responseHelper.putInt("width", resizedImage.getWidth());
-          responseHelper.putInt("height", resizedImage.getHeight());
-          ByteArrayOutputStream bos = new ByteArrayOutputStream();
-          resizedImage.compress(Bitmap.CompressFormat.JPEG, imageConfig.quality, bos);
-          byte[] bitmapdata = bos.toByteArray();
-          ByteArrayInputStream bs = new ByteArrayInputStream(bitmapdata);
-          updatedResultResponse(bs);
-          resizedImage.recycle();
-          resizedImage = null;
-        }
+        responseHelper.putInt("width", resizedImage.getWidth());
+        responseHelper.putInt("height", resizedImage.getHeight());
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        resizedImage.compress(Bitmap.CompressFormat.JPEG, imageConfig.quality, bos);
+        byte[] bitmapdata = bos.toByteArray();
+        ByteArrayInputStream bs = new ByteArrayInputStream(bitmapdata);
+        updatedResultResponse(bs);
+        resizedImage.recycle();
+        resizedImage = null;
       }
-      if(imageBitmap != null){
-        imageBitmap.recycle();
-        imageBitmap = null;
-      }
-
-      if(callback != null){
-        responseHelper.invokeResponse(callback);
-      }
-    } catch(Exception ex){
-      if(callback != null){
-        responseHelper.invokeError(callback, "Error in handling activity response, " + ex.getLocalizedMessage());
-      }
-    } finally {
-      callback = null;
-      options = null;
     }
+    if(imageBitmap != null){
+      imageBitmap.recycle();
+      imageBitmap = null;
+    }
+
+
+    responseHelper.invokeResponse(callback);
+    callback = null;
+    this.options = null;
   }
 
   public void invokeCustomButton(@NonNull final String action)
   {
-    responseHelper.invokeCustomButton(callback, action);
+    responseHelper.invokeCustomButton(this.callback, action);
   }
 
   @Override
@@ -594,6 +568,7 @@ public class ImagePickerModule extends ReactContextBaseJavaModule
   }
 
   private boolean permissionsCheck(@NonNull final Activity activity,
+                                   @NonNull final Callback callback,
                                    @NonNull final int requestCode)
   {
     final int writePermission = ActivityCompat
